@@ -1,6 +1,7 @@
 #ifndef CPR_SESSION_H
 #define CPR_SESSION_H
 
+#include <fstream>
 #include <cstdint>
 #include <memory>
 
@@ -69,6 +70,7 @@ class Session {
     void SetOption(const LowSpeed& low_speed);
     void SetOption(const VerifySsl& verify);
 
+    Response Download(std::ofstream& file);
     Response Delete();
     Response Get();
     Response Head();

@@ -11,6 +11,11 @@
 namespace cpr {
 namespace util {
 
+size_t downloadFunction(void* ptr, size_t size, size_t nmemb, std::ofstream* file) {
+    file->write((char*) ptr, size * nmemb);
+    return size * nmemb;
+}
+
 Header parseHeader(const std::string& headers) {
     Header header;
     std::vector<std::string> lines;

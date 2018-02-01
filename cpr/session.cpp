@@ -1,5 +1,7 @@
 #include "cpr/session.h"
 
+#include <cstdlib>
+#include <fstream>
 #include <algorithm>
 #include <functional>
 #include <string>
@@ -38,6 +40,7 @@ class Session::Impl {
 
     Response Delete();
     Response Get();
+    Response Download(std::ofstream& file);
     Response Head();
     Response Options();
     Response Patch();
@@ -51,6 +54,8 @@ class Session::Impl {
     Proxies proxies_;
 
     Response makeRequest(CURL* curl);
+    Response makeDownloadRequest(CURL* curl, std::ofstream& file);
+
     static void freeHolder(CurlHolder* holder);
     static CurlHolder* newHolder();
 };
@@ -339,6 +344,17 @@ Response Session::Impl::Options() {
 
     return makeRequest(curl);
 }
+Response Session::Impl::Download(std::ofstream& file) {
+    auto curl = curl_->handle;
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, NULL);
+        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+        curl_easy_setopt(curl, CURLOPT_POST, 0L);
+        curl_easy_setopt(curl, CURLOPT_NOBODY, 0L);
+    }
+
+    return makeDownloadRequest(curl, file);
+}
 
 Response Session::Impl::Patch() {
     auto curl = curl_->handle;
@@ -368,6 +384,55 @@ Response Session::Impl::Put() {
     }
 
     return makeRequest(curl);
+}
+Response Session::Impl::makeDownloadRequest(CURL* curl, std::ofstream& file) {
+    if (!parameters_.content.empty()) {
+        Url new_url{url_ + "?" + parameters_.content};
+        curl_easy_setopt(curl, CURLOPT_URL, new_url.data());
+    } else {
+        curl_easy_setopt(curl, CURLOPT_URL, url_.data());
+    }
+
+    auto protocol = url_.substr(0, url_.find(':'));
+    if (proxies_.has(protocol)) {
+        curl_easy_setopt(curl, CURLOPT_PROXY, proxies_[protocol].data());
+    } else {
+        curl_easy_setopt(curl, CURLOPT_PROXY, "");
+    }
+
+    curl_->error[0] = '\0';
+
+    std::string header_string;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cpr::util::downloadFunction);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &file);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, cpr::util::writeFunction);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_string);
+
+    auto curl_error = curl_easy_perform(curl);
+
+    char* raw_url;
+    long response_code;
+    double elapsed;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &elapsed);
+    curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &raw_url);
+
+    Error error(curl_error, curl_->error);
+
+    Cookies cookies;
+    struct curl_slist* raw_cookies;
+    curl_easy_getinfo(curl, CURLINFO_COOKIELIST, &raw_cookies);
+    for (struct curl_slist* nc = raw_cookies; nc; nc = nc->next) {
+        auto tokens = cpr::util::split(nc->data, '\t');
+        auto value = tokens.back();
+        tokens.pop_back();
+        cookies[tokens.back()] = value;
+    }
+    curl_slist_free_all(raw_cookies);
+
+    auto header = cpr::util::parseHeader(header_string);
+    return Response{static_cast<std::int32_t>(response_code),
+        std::string{}, header, raw_url, elapsed, cookies, error};
 }
 
 Response Session::Impl::makeRequest(CURL* curl) {
@@ -472,6 +537,8 @@ Response Session::Options() { return pimpl_->Options(); }
 Response Session::Patch() { return pimpl_->Patch(); }
 Response Session::Post() { return pimpl_->Post(); }
 Response Session::Put() { return pimpl_->Put(); }
+Response Session::Download(std::ofstream& file) { return pimpl_->Download(file); }
+
 // clang-format on
 
 } // namespace cpr
